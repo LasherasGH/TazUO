@@ -3,10 +3,7 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
-using ClassicUO.Game.Data;
-using ClassicUO.Game.GameObjects;
 using ClassicUO.Game.Managers;
-using ClassicUO.Utility;
 using ClassicUO.Utility.Logging;
 using Microsoft.Xna.Framework;
 
@@ -15,9 +12,7 @@ namespace ClassicUO.Game
     public static class LongDistancePathfinder
     {
         private const int CLOSE_DISTANCE_THRESHOLD = 10;
-        private const int MAX_LONG_DISTANCE_NODES = 100000;
         private const int MAX_PATHFIND_ATTEMPTS = 100;
-        private const int INITIAL_PATH_SEGMENTS = 3; // Start following after this many waypoints
 
         private static readonly Dictionary<(int x, int y), LongPathNode> _closedSet = new();
         private static readonly PriorityQueue<LongPathNode> _openSet = new();
@@ -33,133 +28,6 @@ namespace ClassicUO.Game
         private static volatile bool _disableLongDistanceForWaypoints = false;
         private static int _currentChunkSize = 10;
         private static List<Point> _failedTiles = new();
-
-        public static List<Point> FindLongDistancePath(int startX, int startY, int targetX, int targetY)
-        {
-            if (_isPathfinding)
-            {
-                Log.Warn("[LongDistancePathfinder] Already pathfinding, ignoring request");
-                return null;
-            }
-
-            _isPathfinding = true;
-
-            try
-            {
-                // Note: We allow pathfinding even if map generation isn't complete
-                // The WalkableManager will fall back to on-demand calculation
-
-                Log.Info($"[LongDistancePathfinder] Starting pathfind calculation from ({startX}, {startY}) to ({targetX}, {targetY})");
-
-                // Test basic walkability around start position
-                bool startWalkable = IsGenerallyWalkable(startX, startY);
-                bool northWalkable = IsGenerallyWalkable(startX, startY - 1);
-                bool eastWalkable = IsGenerallyWalkable(startX + 1, startY);
-                Log.Info($"[LongDistancePathfinder] Walkability test - Start({startX},{startY}):{startWalkable}, North({startX},{startY-1}):{northWalkable}, East({startX+1},{startY}):{eastWalkable}");
-
-                _targetX = targetX;
-                _targetY = targetY;
-
-                // Clear previous data
-                ClearPathfinding();
-
-                // If we're already within close distance, use regular pathfinder
-                int distance = Math.Max(Math.Abs(targetX - startX), Math.Abs(targetY - startY));
-                if (distance <= CLOSE_DISTANCE_THRESHOLD)
-                {
-                    return ConvertToPointList(Pathfinder.GetPathTo(targetX, targetY, World.Player.Z, 0));
-                }
-
-                // Start long distance pathfinding
-                var startNode = new LongPathNode
-                {
-                    X = startX,
-                    Y = startY,
-                    DistFromStart = 0,
-                    DistToGoal = GetDistance(startX, startY, targetX, targetY),
-                    Parent = null
-                };
-                startNode.Cost = startNode.DistFromStart + startNode.DistToGoal;
-
-                _openSet.Enqueue(startNode, startNode.Cost);
-
-                LongPathNode goalNode = null;
-                int nodesProcessed = 0;
-
-                Log.Info($"[LongDistancePathfinder] Starting A* search, openSet count: {_openSet.Count}");
-
-                while (_openSet.Count > 0)
-                {
-                    var currentNode = _openSet.Dequeue();
-                    var key = (currentNode.X, currentNode.Y);
-
-                    if (_closedSet.ContainsKey(key))
-                        continue;
-
-                    _closedSet[key] = currentNode;
-                    nodesProcessed++;
-
-                    // Check if we're close enough to use regular pathfinding
-                    int distToGoal = GetDistance(currentNode.X, currentNode.Y, targetX, targetY);
-                    if (distToGoal <= CLOSE_DISTANCE_THRESHOLD)
-                    {
-                        goalNode = currentNode;
-                        Log.Info($"[LongDistancePathfinder] Found goal node at ({currentNode.X}, {currentNode.Y}), distance to target: {distToGoal}");
-                        break;
-                    }
-
-                    // Generate neighboring nodes (8-directional movement with larger steps for long distance)
-                    GenerateNeighbors(currentNode);
-                }
-
-                Log.Info($"[LongDistancePathfinder] A* search completed. Nodes processed: {nodesProcessed}, Goal found: {goalNode != null}");
-
-                if (goalNode != null)
-                {
-                    // Reconstruct the long-distance path
-                    var longPath = ReconstructPath(goalNode);
-                    Log.Info($"[LongDistancePathfinder] Reconstructed path with {longPath.Count} points");
-
-                    // For now, just return the long path - the regular pathfinder will be used
-                    // for the final approach when the player gets close enough
-                    if (longPath.Count > 0)
-                    {
-                        var lastPoint = longPath[longPath.Count - 1];
-                        int distToTarget = GetDistance(lastPoint.X, lastPoint.Y, targetX, targetY);
-
-                        Log.Info($"[LongDistancePathfinder] Long path ends at ({lastPoint.X}, {lastPoint.Y}), distance to target: {distToTarget}");
-
-                        // If the long path gets us very close to the target, add the target as final point
-                        if (distToTarget <= 5)
-                        {
-                            longPath.Add(new Point(targetX, targetY));
-                            Log.Info($"[LongDistancePathfinder] Added target point to path: {longPath.Count} total points");
-                        }
-
-                        return longPath;
-                    }
-
-                    return longPath;
-                }
-
-                Log.Warn($"[LongDistancePathfinder] No path found, attempting fallback");
-
-                // If we can't find a complete path, try to get as close as possible
-                var fallbackPath = FindClosestAccessiblePoint(startX, startY, targetX, targetY);
-                if (fallbackPath != null && fallbackPath.Count > 1) // Only return if we have more than just the start point
-                {
-                    Log.Info($"[LongDistancePathfinder] Fallback path found with {fallbackPath.Count} points");
-                    return fallbackPath;
-                }
-
-                Log.Warn($"[LongDistancePathfinder] No viable path found to target");
-                return null;
-            }
-            finally
-            {
-                _isPathfinding = false;
-            }
-        }
 
         public static bool WalkLongDistance(int targetX, int targetY)
         {
@@ -255,10 +123,13 @@ namespace ClassicUO.Game
                 // No more tiles available
                 if (_pathGenerationComplete)
                 {
-                    GameActions.Print("Destination reached!");
-                    Log.Info("[LongDistancePathfinder] Path completed successfully");
-                    StopPathfinding();
-                    return;
+                    if((World.Player.X == _targetX && World.Player.Y == _targetY) || !Pathfinder.WalkTo(_targetX, _targetY, World.Player.Z, 0))
+                    {
+                        GameActions.Print("Destination reached!");
+                        Log.Info("[LongDistancePathfinder] Path completed successfully");
+                        StopPathfinding();
+                        return;
+                    }
                 }
                 // If path generation is still in progress, wait for more tiles
                 Log.Info("[LongDistancePathfinder] Waiting for more tiles...");
@@ -320,7 +191,7 @@ namespace ClassicUO.Game
                 // Put all tiles back as failed and reduce chunk size
                 _failedTiles.AddRange(chunkTiles);
                 _currentChunkSize = Math.Max(1, _currentChunkSize - 1);
-                
+
                 if (_currentChunkSize == 1)
                 {
                     Log.Warn($"[LongDistancePathfinder] No reachable tiles and chunk size reduced to 1 - halting pathfinding");
@@ -446,7 +317,7 @@ namespace ClassicUO.Game
                 // Calculate distance to see if it would normally trigger long distance pathfinding
                 int playerDistance = Math.Max(Math.Abs(x - World.Player.X), Math.Abs(y - World.Player.Y));
 
-                if (playerDistance <= 15)
+                if (playerDistance <= CLOSE_DISTANCE_THRESHOLD)
                 {
                     // Distance is small enough, just use regular pathfinder directly
                     return Pathfinder.WalkTo(x, y, z, distance);
@@ -646,14 +517,14 @@ namespace ClassicUO.Game
         {
             // Use single-tile steps for full path generation
             const int stepSize = 1;
-            
+
             // Calculate direction to target for prioritization
             int deltaX = _targetX - currentNode.X;
             int deltaY = _targetY - currentNode.Y;
-            
+
             // Determine primary direction(s) toward target
             var directions = new List<int>();
-            
+
             // Add primary direction first (highest priority)
             if (deltaX > 0 && deltaY < 0) directions.Add(1); // Northeast
             else if (deltaX > 0 && deltaY > 0) directions.Add(3); // Southeast
@@ -663,7 +534,7 @@ namespace ClassicUO.Game
             else if (deltaX < 0) directions.Add(6); // West
             else if (deltaY < 0) directions.Add(0); // North
             else if (deltaY > 0) directions.Add(4); // South
-            
+
             // Add secondary directions (adjacent to primary)
             if (deltaX != 0 && deltaY != 0)
             {
@@ -681,7 +552,7 @@ namespace ClassicUO.Game
                 if (deltaY < 0) { directions.Add(1); directions.Add(7); } // NE, NW
                 if (deltaY > 0) { directions.Add(3); directions.Add(5); } // SE, SW
             }
-            
+
             // Only add other directions if we can't move in preferred directions
             bool foundGoodDirection = false;
             int neighborsGenerated = 0;
@@ -691,7 +562,7 @@ namespace ClassicUO.Game
             {
                 int newX = currentNode.X;
                 int newY = currentNode.Y;
-                
+
                 // Calculate direction offsets (single tile moves)
                 switch (dir)
                 {
@@ -736,17 +607,17 @@ namespace ClassicUO.Game
                 _openSet.Enqueue(neighborNode, newCost);
                 neighborsGenerated++;
             }
-            
+
             // If no good directions found, try all directions as fallback
             if (!foundGoodDirection)
             {
                 for (int dir = 0; dir < 8; dir++)
                 {
                     if (directions.Contains(dir)) continue; // Already tried
-                    
+
                     int newX = currentNode.X;
                     int newY = currentNode.Y;
-                    
+
                     // Calculate direction offsets (single tile moves)
                     switch (dir)
                     {
@@ -791,90 +662,11 @@ namespace ClassicUO.Game
                     neighborsGenerated++;
                 }
             }
-            
+
             //Log.Debug($"[LongDistancePathfinder] Generated {neighborsGenerated} prioritized neighbors from ({currentNode.X}, {currentNode.Y})");
         }
 
-        private static void GenerateNeighbors(LongPathNode currentNode)
-        {
-            // Use variable step sizes based on distance to goal
-            int distToGoal = GetDistance(currentNode.X, currentNode.Y, _targetX, _targetY);
-            int stepSize = Math.Min(Math.Max(distToGoal / 20, 1), 5); // Between 1 and 5 tiles
-
-            int neighborsGenerated = 0;
-
-            for (int dir = 0; dir < 8; dir++)
-            {
-                int newX = currentNode.X;
-                int newY = currentNode.Y;
-
-                // Calculate direction offsets
-                switch (dir)
-                {
-                    case 0: newY -= stepSize; break;           // North
-                    case 1: newX += stepSize; newY -= stepSize; break; // Northeast
-                    case 2: newX += stepSize; break;           // East
-                    case 3: newX += stepSize; newY += stepSize; break; // Southeast
-                    case 4: newY += stepSize; break;           // South
-                    case 5: newX -= stepSize; newY += stepSize; break; // Southwest
-                    case 6: newX -= stepSize; break;           // West
-                    case 7: newX -= stepSize; newY -= stepSize; break; // Northwest
-                }
-
-                // Check bounds
-                if (newX < 0 || newY < 0 || newX >= 65536 || newY >= 65536)
-                    continue;
-
-                var key = (newX, newY);
-                if (_closedSet.ContainsKey(key))
-                    continue;
-
-                // Check if the tile is generally walkable using our walkable manager
-                bool walkable = IsGenerallyWalkable(newX, newY);
-                if (!walkable)
-                {
-                    if (dir == 0) // Only log once per node to avoid spam
-                    {
-                        Log.Debug($"[LongDistancePathfinder] All neighbors from ({currentNode.X}, {currentNode.Y}) are not walkable");
-                    }
-                    continue;
-                }
-
-                int newDistFromStart = currentNode.DistFromStart + stepSize;
-                int newDistToGoal = GetDistance(newX, newY, _targetX, _targetY);
-                int newCost = newDistFromStart + newDistToGoal;
-
-                var neighborNode = new LongPathNode
-                {
-                    X = newX,
-                    Y = newY,
-                    DistFromStart = newDistFromStart,
-                    DistToGoal = newDistToGoal,
-                    Cost = newCost,
-                    Parent = currentNode
-                };
-
-                _openSet.Enqueue(neighborNode, newCost);
-                neighborsGenerated++;
-            }
-
-            Log.Debug($"[LongDistancePathfinder] Generated {neighborsGenerated} neighbors from ({currentNode.X}, {currentNode.Y}) with stepSize {stepSize}");
-        }
-
-        private static bool IsGenerallyWalkable(int x, int y)
-        {
-            try
-            {
-                // Use the WalkableManager - this is the whole point of the system
-                bool walkable = WalkableManager.Instance.IsWalkable(x, y);
-                return walkable;
-            }
-            catch (Exception ex)
-            {
-                Log.Warn($"[LongDistancePathfinder] Error checking walkability at ({x}, {y}): {ex.Message}");
-                return false;
-            }
-        }
+        private static bool IsGenerallyWalkable(int x, int y) => WalkableManager.Instance.IsWalkable(x, y);
 
         private static List<Point> ReconstructPath(LongPathNode goalNode)
         {
@@ -889,20 +681,6 @@ namespace ClassicUO.Game
 
             path.Reverse();
             return path;
-        }
-
-        private static List<Point> FindClosestAccessiblePoint(int startX, int startY, int targetX, int targetY)
-        {
-            // If we can't reach the exact target, try to get as close as possible
-            var bestNode = FindClosestNodeToTarget();
-
-            if (bestNode != null)
-            {
-                return ReconstructPath(bestNode);
-            }
-
-            // Last resort: try direct line with obstacle avoidance
-            return CreateDirectPathWithAvoidance(startX, startY, targetX, targetY);
         }
 
         private static LongPathNode FindClosestNodeToTarget()
@@ -988,10 +766,7 @@ namespace ClassicUO.Game
             return path;
         }
 
-        private static int GetDistance(int x1, int y1, int x2, int y2)
-        {
-            return Math.Max(Math.Abs(x2 - x1), Math.Abs(y2 - y1));
-        }
+        private static int GetDistance(int x1, int y1, int x2, int y2) => Math.Max(Math.Abs(x2 - x1), Math.Abs(y2 - y1));
 
         private static List<Point> ConvertToPointList(List<(int X, int Y, int Z)> path)
         {
