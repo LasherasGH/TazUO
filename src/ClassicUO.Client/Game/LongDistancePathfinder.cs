@@ -320,6 +320,13 @@ namespace ClassicUO.Game
                 // Put all tiles back as failed and reduce chunk size
                 _failedTiles.AddRange(chunkTiles);
                 _currentChunkSize = Math.Max(1, _currentChunkSize - 1);
+                
+                if (_currentChunkSize == 1)
+                {
+                    Log.Warn($"[LongDistancePathfinder] No reachable tiles and chunk size reduced to 1 - halting pathfinding");
+                    GameActions.Print("Long distance pathfinding failed - no reachable path found");
+                    StopPathfinding();
+                }
                 return;
             }
 
@@ -354,7 +361,10 @@ namespace ClassicUO.Game
 
                 if (_currentChunkSize == 1)
                 {
-                    Log.Warn($"[LongDistancePathfinder] Chunk size reduced to 1, this might indicate pathfinding issues");
+                    Log.Warn($"[LongDistancePathfinder] Chunk size reduced to 1, this indicates pathfinding issues - halting");
+                    GameActions.Print("Long distance pathfinding failed - destination may be unreachable");
+                    StopPathfinding();
+                    return;
                 }
             }
         }
