@@ -636,14 +636,52 @@ namespace ClassicUO.Game
         {
             // Use single-tile steps for full path generation
             const int stepSize = 1;
-
+            
+            // Calculate direction to target for prioritization
+            int deltaX = _targetX - currentNode.X;
+            int deltaY = _targetY - currentNode.Y;
+            
+            // Determine primary direction(s) toward target
+            var directions = new List<int>();
+            
+            // Add primary direction first (highest priority)
+            if (deltaX > 0 && deltaY < 0) directions.Add(1); // Northeast
+            else if (deltaX > 0 && deltaY > 0) directions.Add(3); // Southeast
+            else if (deltaX < 0 && deltaY > 0) directions.Add(5); // Southwest
+            else if (deltaX < 0 && deltaY < 0) directions.Add(7); // Northwest
+            else if (deltaX > 0) directions.Add(2); // East
+            else if (deltaX < 0) directions.Add(6); // West
+            else if (deltaY < 0) directions.Add(0); // North
+            else if (deltaY > 0) directions.Add(4); // South
+            
+            // Add secondary directions (adjacent to primary)
+            if (deltaX != 0 && deltaY != 0)
+            {
+                // For diagonal movement, also try the cardinal directions
+                if (deltaX > 0) directions.Add(2); // East
+                if (deltaX < 0) directions.Add(6); // West
+                if (deltaY < 0) directions.Add(0); // North
+                if (deltaY > 0) directions.Add(4); // South
+            }
+            else
+            {
+                // For cardinal movement, try adjacent diagonals
+                if (deltaX > 0) { directions.Add(1); directions.Add(3); } // NE, SE
+                if (deltaX < 0) { directions.Add(5); directions.Add(7); } // SW, NW
+                if (deltaY < 0) { directions.Add(1); directions.Add(7); } // NE, NW
+                if (deltaY > 0) { directions.Add(3); directions.Add(5); } // SE, SW
+            }
+            
+            // Only add other directions if we can't move in preferred directions
+            bool foundGoodDirection = false;
             int neighborsGenerated = 0;
 
-            for (int dir = 0; dir < 8; dir++)
+            // Try preferred directions first
+            foreach (int dir in directions)
             {
                 int newX = currentNode.X;
                 int newY = currentNode.Y;
-
+                
                 // Calculate direction offsets (single tile moves)
                 switch (dir)
                 {
@@ -670,6 +708,7 @@ namespace ClassicUO.Game
                 if (!walkable)
                     continue;
 
+                foundGoodDirection = true;
                 int newDistFromStart = currentNode.DistFromStart + stepSize;
                 int newDistToGoal = GetDistance(newX, newY, _targetX, _targetY);
                 int newCost = newDistFromStart + newDistToGoal;
@@ -687,8 +726,63 @@ namespace ClassicUO.Game
                 _openSet.Enqueue(neighborNode, newCost);
                 neighborsGenerated++;
             }
+            
+            // If no good directions found, try all directions as fallback
+            if (!foundGoodDirection)
+            {
+                for (int dir = 0; dir < 8; dir++)
+                {
+                    if (directions.Contains(dir)) continue; // Already tried
+                    
+                    int newX = currentNode.X;
+                    int newY = currentNode.Y;
+                    
+                    // Calculate direction offsets (single tile moves)
+                    switch (dir)
+                    {
+                        case 0: newY -= stepSize; break;           // North
+                        case 1: newX += stepSize; newY -= stepSize; break; // Northeast
+                        case 2: newX += stepSize; break;           // East
+                        case 3: newX += stepSize; newY += stepSize; break; // Southeast
+                        case 4: newY += stepSize; break;           // South
+                        case 5: newX -= stepSize; newY += stepSize; break; // Southwest
+                        case 6: newX -= stepSize; break;           // West
+                        case 7: newX -= stepSize; newY -= stepSize; break; // Northwest
+                    }
 
-            //Log.Debug($"[LongDistancePathfinder] Generated {neighborsGenerated} single-tile neighbors from ({currentNode.X}, {currentNode.Y})");
+                    // Check bounds
+                    if (newX < 0 || newY < 0 || newX >= 65536 || newY >= 65536)
+                        continue;
+
+                    var key = (newX, newY);
+                    if (_closedSet.ContainsKey(key))
+                        continue;
+
+                    // Check if the tile is walkable using our walkable manager
+                    bool walkable = IsGenerallyWalkable(newX, newY);
+                    if (!walkable)
+                        continue;
+
+                    int newDistFromStart = currentNode.DistFromStart + stepSize;
+                    int newDistToGoal = GetDistance(newX, newY, _targetX, _targetY);
+                    int newCost = newDistFromStart + newDistToGoal;
+
+                    var neighborNode = new LongPathNode
+                    {
+                        X = newX,
+                        Y = newY,
+                        DistFromStart = newDistFromStart,
+                        DistToGoal = newDistToGoal,
+                        Cost = newCost,
+                        Parent = currentNode
+                    };
+
+                    _openSet.Enqueue(neighborNode, newCost);
+                    neighborsGenerated++;
+                }
+            }
+            
+            //Log.Debug($"[LongDistancePathfinder] Generated {neighborsGenerated} prioritized neighbors from ({currentNode.X}, {currentNode.Y})");
         }
 
         private static void GenerateNeighbors(LongPathNode currentNode)
