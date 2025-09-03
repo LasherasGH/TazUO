@@ -231,6 +231,9 @@ namespace ClassicUO.Game.Scenes
             }
 
             CommandManager.Initialize();
+
+            // Initialize WalkableManager
+            WalkableManager.Instance.Initialize();
             NetClient.Socket.Disconnected += SocketOnDisconnected;
             EventSink.MessageReceived += ChatOnMessageReceived;
             UIManager.ContainerScale = ProfileManager.CurrentProfile.ContainersScale / 100f;
@@ -495,6 +498,9 @@ namespace ClassicUO.Game.Scenes
 
             Settings.GlobalSettings.IsWindowMaximized = Client.Game.IsWindowMaximized();
             Client.Game.SetWindowBorderless(false);
+
+            // Shutdown WalkableManager
+            WalkableManager.Instance.Shutdown();
 
             base.Unload();
         }
@@ -867,6 +873,12 @@ namespace ClassicUO.Game.Scenes
                 World.Map?.ClearUnusedBlocks();
                 _time_cleanup = Time.Ticks + 500;
             }
+
+            // Update WalkableManager for chunk generation
+            WalkableManager.Instance.Update();
+
+            // Update LongDistancePathfinder
+            LongDistancePathfinder.Update();
 
             PacketHandlers.SendMegaClilocRequests();
 
