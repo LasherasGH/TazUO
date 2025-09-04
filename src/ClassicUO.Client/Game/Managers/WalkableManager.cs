@@ -9,6 +9,7 @@ using ClassicUO.Configuration;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
 using ClassicUO.Game.Map;
+using ClassicUO.Utility;
 using ClassicUO.Utility.Logging;
 
 namespace ClassicUO.Game.Managers
@@ -147,71 +148,6 @@ namespace ClassicUO.Game.Managers
             return IsMapGenerationComplete(World.Map.Index);
         }
 
-        public void SetChunksPerCycle(int chunksPerCycle)
-        {
-            if (chunksPerCycle <= 0)
-            {
-                Log.Warn($"[WalkableManager] Invalid chunks per cycle: {chunksPerCycle}, using min: {MIN_CHUNKS_PER_CYCLE}");
-                _chunksPerCycle = MIN_CHUNKS_PER_CYCLE;
-            }
-            else
-            {
-                _chunksPerCycle = Math.Min(Math.Max(chunksPerCycle, MIN_CHUNKS_PER_CYCLE), MAX_CHUNKS_PER_CYCLE);
-                Log.Info($"[WalkableManager] Chunks per cycle manually set to: {_chunksPerCycle} (disabling auto-adjustment)");
-
-                // Clear performance samples to disable auto-adjustment when manually set
-                _recentGenerationTimes.Clear();
-            }
-        }
-
-        public int GetChunksPerCycle()
-        {
-            return _chunksPerCycle;
-        }
-
-        public bool IsAutoAdjustmentEnabled()
-        {
-            return _recentGenerationTimes.Count < PERFORMANCE_SAMPLE_SIZE;
-        }
-
-        public void EnableAutoAdjustment()
-        {
-            _chunksPerCycle = 1; // Reset to 1 for fresh performance measurement
-            _recentGenerationTimes.Clear();
-            Log.Info($"[WalkableManager] Auto-adjustment enabled, starting with {_chunksPerCycle} chunks/cycle");
-        }
-
-        public double GetAverageGenerationTime()
-        {
-            if (_recentGenerationTimes.Count == 0)
-                return 0;
-
-            double total = 0;
-            foreach (double time in _recentGenerationTimes)
-            {
-                total += time;
-            }
-            return total / _recentGenerationTimes.Count;
-        }
-
-        public void ForceGenerateChunks(int numChunks)
-        {
-            if (!World.InGame || World.Map == null)
-            {
-                Log.Warn("[WalkableManager] Cannot force generate chunks: not in game or no active map");
-                return;
-            }
-
-            if (IsCurrentMapReady())
-            {
-                Log.Info($"[WalkableManager] Map {World.Map.Index} is already fully generated");
-                return;
-            }
-
-            Log.Info($"[WalkableManager] Force generating {numChunks} chunks for map {World.Map.Index}");
-            GenerateNextChunks(numChunks);
-        }
-
         public (int current, int total) GetMapGenerationProgress(int mapIndex)
         {
             if (IsMapGenerationComplete(mapIndex))
@@ -237,6 +173,8 @@ namespace ClassicUO.Game.Managers
 
             return GetMapGenerationProgress(World.Map.Index);
         }
+
+        private ulong nextUpdateMessage = Time.Ticks;
 
         private void GenerateNextChunks(int numChunks)
         {
@@ -283,6 +221,13 @@ namespace ClassicUO.Game.Managers
                     chunksGenerated++;
                 }
 
+                if (Time.Ticks > nextUpdateMessage)
+                {
+                    var val = GetCurrentMapGenerationProgress();
+                    GameActions.Print($"Generating pathfinding cache. {MathHelper.PercetangeOf(val.current, val.total)}% ({val.current}/{val.total})");
+                    nextUpdateMessage = Time.Ticks + 5000;
+                }
+
                 // Update the generation index
                 _mapChunkGenerationIndex[mapIndex] = currentIndex;
 
@@ -291,6 +236,7 @@ namespace ClassicUO.Game.Managers
                 {
                     _mapGenerationComplete[mapIndex] = true;
                     Log.Info($"[WalkableManager] Map {mapIndex} generation completed. Total chunks: {totalChunks}");
+                    GameActions.Print($"Pathfinding cache completed for map {mapIndex}!");
                 }
             }
             finally
@@ -409,6 +355,8 @@ namespace ClassicUO.Game.Managers
             });
         }
 
+        private static Direction _unreleventDirection = Direction.NONE;
+
         private bool CalculateWalkabilityForTile(int x, int y)
         {
             try
@@ -426,15 +374,18 @@ namespace ClassicUO.Game.Managers
                     return false;
                 }
 
+
                 // For now, let's use a very basic walkability check
                 // If we can get a tile, and it's a land tile, consider it walkable
-                // This is temporary until we debug the Pathfinder.CanWalk issue
-                if (tile is Land)
-                {
-                    //sbyte z = World.Map.GetTileZ(x, y);
-                    //Log.Debug($"[WalkableManager] Land tile at ({x}, {y}) z={z}: true");
-                    return true; // Very permissive for now
-                }
+                // if (tile is Land land)
+                // {
+                //     //Log.Debug($"[WalkableManager] Land tile at ({x}, {y}) z={z}: true");
+                //
+                //     return true; // Very permissive for now
+                // }
+                sbyte z = World.Map.GetTileZ(x, y);
+                return Pathfinder.CanWalk(ref _unreleventDirection, ref x, ref y, ref z, true);
+
 
                 // For other tile types, also be permissive for debugging
                 //Log.Debug($"[WalkableManager] Non-land tile at ({x}, {y}): true");
