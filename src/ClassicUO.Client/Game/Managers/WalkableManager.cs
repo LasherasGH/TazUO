@@ -107,6 +107,19 @@ namespace ClassicUO.Game.Managers
             sessionData.SetWalkable(x, y, walkable);
         }
 
+        public void ClearSessionWalkable(int x, int y)
+        {
+            if (!World.InGame || World.Map == null)
+                return;
+
+            int mapIndex = World.Map.Index;
+
+            if (_sessionModifications.TryGetValue(mapIndex, out var sessionData))
+            {
+                sessionData.ClearWalkable(x, y);
+            }
+        }
+
         public void Update()
         {
             if (!World.InGame)
@@ -661,6 +674,18 @@ namespace ClassicUO.Game.Managers
             }
         }
 
+        public void ClearWalkable(int x, int y)
+        {
+            long chunkKey = GetChunkKey(x >> 3, y >> 3);
+            lock (_dataLock)
+            {
+                if (_chunks.TryGetValue(chunkKey, out var chunk))
+                {
+                    chunk.Clear(x & 7, y & 7);
+                }
+            }
+        }
+
         public int CalculateGenerationProgress(int mapIndex)
         {
             // Calculate how many 8x8 map chunks we have data for
@@ -851,6 +876,17 @@ namespace ClassicUO.Game.Managers
                 _data[y] |= (byte)(1 << x);
             else
                 _data[y] &= (byte)~(1 << x);
+        }
+
+        public void Clear(int x, int y)
+        {
+            if (x < 0 || x >= 8 || y < 0 || y >= 8)
+                return;
+
+            // Clear the set bit
+            _isset[y] &= (byte)~(1 << x);
+            // Clear the data bit
+            _data[y] &= (byte)~(1 << x);
         }
 
         public void WriteTo(BinaryWriter writer)

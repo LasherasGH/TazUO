@@ -2,7 +2,7 @@
 
 // Copyright (c) 2021, andreakarasho
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
 // 1. Redistributions of source code must retain the above copyright
@@ -16,7 +16,7 @@
 // 4. Neither the name of the copyright holder nor the
 //    names of its contributors may be used to endorse or promote products
 //    derived from this software without specific prior written permission.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ''AS IS'' AND ANY
 // EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 // WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -45,6 +45,14 @@ namespace ClassicUO.Game.Managers
         public void Add(uint serial, House revision)
         {
             _houses[serial] = revision;
+
+            for (int x = revision.Bounds.X; x < revision.Bounds.X + revision.Bounds.Width; x++)
+            {
+                for (int y = revision.Bounds.Y; y < revision.Bounds.Y + revision.Bounds.Height; y++)
+                {
+                    WalkableManager.Instance.SetSessionWalkable(x, y, false);
+                }
+            }
         }
 
         public bool TryGetHouse(uint serial, out House house)
@@ -61,7 +69,6 @@ namespace ClassicUO.Game.Managers
                     house.ClearComponents();
                     _houses.Remove(serial);
                 }
-
 
                 return true;
             }
